@@ -81,7 +81,7 @@ class EntityManager
         if ($id === null) {
             throw new \RuntimeException('Cannot attach entity without primary key value');
         }
-        $this->track($entity, $meta);
+        $this->internalTrack($entity, $meta);
     }
 
     // ─── Find / Query ─────────────────────────────────────────────
@@ -103,7 +103,7 @@ class EntityManager
         if (empty($rows)) return null;
 
         $entity = $this->hydrateEntity($class, $meta, $rows[0]);
-        $this->track($entity, $meta);
+        $this->internalTrack($entity, $meta);
 
         return $entity;
     }
@@ -121,7 +121,7 @@ class EntityManager
         $entities = [];
         foreach ($rows as $row) {
             $entity = $this->hydrateEntity($class, $meta, $row);
-            $this->track($entity, $meta);
+            $this->internalTrack($entity, $meta);
             $entities[] = $entity;
         }
         return $entities;
@@ -132,7 +132,7 @@ class EntityManager
      */
     public function query(string $class): QueryBuilder
     {
-        return new QueryBuilder($class, $this->conn);
+        return new QueryBuilder($class, $this);
     }
 
     /**
@@ -157,7 +157,7 @@ class EntityManager
             $id = $entity->{$meta->primaryKey};
             if ($id && !$meta->hasAutoIncrement) {
                 // Track for update
-                $this->track($entity, $meta);
+                $this->internalTrack($entity, $meta);
                 return;
             }
             if ($id && isset($this->identityMap[get_class($entity)][$id])) {
@@ -337,7 +337,7 @@ class EntityManager
                 $entity->{$meta->primaryKey} = (int) $this->conn->getWriteConnection()->lastInsertId();
             }
 
-            $this->track($entity, $meta);
+            $this->internalTrack($entity, $meta);
         }
     }
 
@@ -413,7 +413,10 @@ class EntityManager
         unset($this->snapshots[$class][$id]);
     }
 
-    private function track(object $entity, EntityMetadata $meta): void
+    /**
+     * @internal Used by QueryBuilder to track hydrated entities
+     */
+    public function internalTrack(object $entity, EntityMetadata $meta): void
     {
         $class = get_class($entity);
         $id = $entity->{$meta->primaryKey} ?? null;

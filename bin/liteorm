@@ -1,0 +1,100 @@
+#!/usr/bin/env php
+<?php
+
+declare(strict_types=1);
+
+if (php_sapi_name() !== 'cli') {
+    die("This script can only be run from the command line.\n");
+}
+
+// Autoloader fallback (Composer or manual)
+$autoloadFiles = [
+    __DIR__ . '/../vendor/autoload.php',
+    __DIR__ . '/../../../autoload.php',
+];
+$autoloaderFound = false;
+foreach ($autoloadFiles as $file) {
+    if (file_exists($file)) {
+        require_once $file;
+        $autoloaderFound = true;
+        break;
+    }
+}
+if (!$autoloaderFound) {
+    die("Composer autoloader not found. Please run 'composer install' first.\n");
+}
+
+use LiteORM\Connection\ConnectionManager;
+use LiteORM\Schema\EntityGenerator;
+
+function printHelp(): void
+{
+    echo "LiteORM CLI — Entity Generator\n";
+    echo "Usage:\n";
+    echo "  bin/liteorm generate --dsn=\"sqlite:db.sqlite\" --namespace=\"App\\\\Entity\" --out=\"./src/Entity\"\n";
+    echo "\nOptions:\n";
+    echo "  --dsn        (Required) Database DSN (e.g. mysql:host=localhost;dbname=myapp)\n";
+    echo "  --user       (Optional) Database username\n";
+    echo "  --pass       (Optional) Database password\n";
+    echo "  --namespace  (Required) Target PHP namespace for generated entities\n";
+    echo "  --out        (Required) Output directory for generated PHP files\n";
+    echo "  --table      (Optional) Generate for a specific table only. If omitted, generates all tables.\n";
+    echo "\nExample:\n";
+    echo "  bin/liteorm generate --dsn=\"mysql:host=127.0.0.1;dbname=app\" --user=root --pass=secret --namespace=\"App\\\\Models\" --out=\"src/Models/\"\n";
+    exit(1);
+}
+
+// Parse command line arguments
+$options = getopt('', ['dsn:', 'user:', 'pass:', 'namespace:', 'out:', 'table:', 'help']);
+
+if (isset($options['help']) || $argc < 2 || $argv[1] !== 'generate') {
+    printHelp();
+}
+
+$dsn = $options['dsn'] ?? null;
+$namespace = $options['namespace'] ?? null;
+$outDir = $options['out'] ?? null;
+$user = $options['user'] ?? null;
+$pass = $options['pass'] ?? null;
+$specificTable = $options['table'] ?? null;
+
+if (!$dsn || !$namespace || !$outDir) {
+    echo "Error: --dsn, --namespace, and --out are required.\n\n";
+    printHelp();
+}
+
+if (!is_dir($outDir)) {
+    if (!mkdir($outDir, 0777, true) && !is_dir($outDir)) {
+        die("Error: Failed to create output directory '{$outDir}'.\n");
+    }
+}
+
+echo "🔮 LiteORM Entity Generator\n";
+echo "Connecting to database...\n";
+
+try {
+    $conn = new ConnectionManager($dsn, $user, $pass);
+    // Ping to verify connection
+    $conn->getReadConnection()->query('SELECT 1');
+} catch (\Throwable $e) {
+    die("Database Connection Error: " . $e->getMessage() . "\n");
+}
+
+$generator = new EntityGenerator($conn, $namespace);
+
+try {
+    if ($specificTable) {
+        echo "Generating entity for table '{$specificTable}'...\n";
+        $path = $generator->generateToFile($specificTable, $outDir);
+        echo "✔ Created: {$path}\n";
+    } else {
+        echo "Generating entities for all tables...\n";
+        $files = $generator->generateAllToFiles($outDir);
+        foreach ($files as $table => $path) {
+            echo "✔ Created [{$table}]: {$path}\n";
+        }
+        echo "\nDone! Generated " . count($files) . " entities.\n";
+    }
+} catch (\Throwable $e) {
+    die("\nGeneration Error: " . $e->getMessage() . "\n");
+}

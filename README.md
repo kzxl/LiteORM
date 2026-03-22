@@ -209,22 +209,31 @@ $em = new EntityManager([
 // INSERT/UPDATE/DELETE → master
 ```
 
-### 6. Generate Entities from Database
+### 6. Code Generator (CLI)
+
+LiteORM includes a CLI tool to reverse-engineer database tables into PHP entity classes automatically.
+
+```bash
+# Generate entities for ALL tables
+php bin/liteorm generate --dsn="mysql:host=127.0.0.1;dbname=app" --user=root --pass=secret --namespace="App\Entity" --out="./src/Entity"
+
+# Generate for a specific table ONLY
+php bin/liteorm generate --dsn="sqlite:database.sqlite" --namespace="App\Entity" --out="./src/Entity" --table="users"
+```
+
+### 7. AsNoTracking (Read-Only Queries)
+
+If you are querying data only for display and do not intend to update it, use `asNoTracking()`. This bypasses the Unit of Work identity map, saving memory and CPU time during snapshot creation.
 
 ```php
-use LiteORM\Schema\EntityGenerator;
+$users = $em->query(User::class)
+    ->where('role', 'admin')
+    ->asNoTracking()
+    ->toList();
 
-$gen = new EntityGenerator($em->getConnection(), 'App\\Entity');
-
-// Generate single table
-$code = $gen->generate('users');
-echo $code;  // Full PHP entity class with attributes
-
-// Generate to file
-$gen->generateToFile('users', './src/Entity/');
-
-// Generate ALL tables
-$gen->generateAllToFiles('./src/Entity/');
+// Changes will NOT be saved
+$users[0]->name = 'Hacked';
+$em->flush(); // (0 queries executed)
 ```
 
 ---
@@ -250,6 +259,7 @@ $gen->generateAllToFiles('./src/Entity/');
 | `OrderBy/Desc` | `->orderBy('col', 'DESC')` | |
 | `GroupBy` | `->groupBy('col')` | |
 | `Select()` | `->select('col1', 'col2')` | |
+| `AsNoTracking()` | `->asNoTracking()` | Bypasses UoW tracking |
 
 ---
 
@@ -257,6 +267,8 @@ $gen->generateAllToFiles('./src/Entity/');
 
 ```
 LiteORM/
+├── bin/
+│   └── liteorm             # CLI Generator tool
 ├── src/
 │   ├── Attribute/          # PHP 8.2 attributes (Entity, Column, Id, Relations...)
 │   ├── Metadata/           # AttributeReader, EntityMetadata, ColumnMetadata
@@ -264,7 +276,7 @@ LiteORM/
 │   ├── Query/              # QueryBuilder (LINQ-style fluent API)
 │   ├── Schema/             # EntityGenerator (reverse DB → PHP)
 │   └── EntityManager.php   # Main entry point (UoW, Identity Map)
-├── tests/                  # PHPUnit test suite (34 tests)
+├── tests/                  # PHPUnit test suite (67 tests)
 ├── composer.json
 └── phpunit.xml
 ```

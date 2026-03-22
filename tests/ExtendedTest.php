@@ -574,4 +574,34 @@ class ExtendedTest extends TestCase
         $this->assertCount(1, $rows);
         $this->assertEquals('Raw', $rows[0]['name']);
     }
+
+    public function testAsNoTracking(): void
+    {
+        $user = new User();
+        $user->name = 'NoTracking';
+        $user->email = 'notrack@test.com';
+        $this->em->persist($user);
+        $this->em->flush();
+        $this->em->clear();
+
+        // Query with AsNoTracking
+        $found = $this->em->query(User::class)
+            ->where('email', 'notrack@test.com')
+            ->asNoTracking()
+            ->first();
+
+        // Modify hydrated object
+        $found->name = 'Modified But Ignored';
+
+        // Flush should NOT detect the change because entity is not in identity map
+        $this->em->getConnection()->resetQueryCount();
+        $this->em->flush();
+
+        // Verify update was skipped (0 queries from flush updates)
+        $this->assertEquals(0, $this->em->getConnection()->getQueryCount());
+
+        $this->em->clear();
+        $dbUser = $this->em->query(User::class)->where('email', 'notrack@test.com')->first();
+        $this->assertEquals('NoTracking', $dbUser->name);
+    }
 }

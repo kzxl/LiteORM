@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 namespace LiteORM\Query;
 
-use LiteORM\Connection\ConnectionManager;
+use LiteORM\EntityManager;
 use LiteORM\Metadata\{AttributeReader, EntityMetadata};
 
 /**
@@ -13,7 +13,7 @@ use LiteORM\Metadata\{AttributeReader, EntityMetadata};
 class QueryBuilder
 {
     private EntityMetadata $meta;
-    private ConnectionManager $conn;
+    private EntityManager $em;
 
     private array $selects = [];
     private array $wheres = [];
@@ -27,14 +27,15 @@ class QueryBuilder
     private ?string $groupByVal = null;
     private ?string $havingVal = null;
     private bool $distinctFlag = false;
+    private bool $asNoTracking = false;
     private int $paramIndex = 0;
 
     public function __construct(
         private readonly string $entityClass,
-        ConnectionManager $conn,
+        EntityManager $em,
     ) {
         $this->meta = AttributeReader::read($entityClass);
-        $this->conn = $conn;
+        $this->em = $em;
     }
 
     // ─── SELECT ───────────────────────────────────────────────────
@@ -176,11 +177,17 @@ class QueryBuilder
         return $this;
     }
 
-    // ─── CACHE ────────────────────────────────────────────────────
+    // ─── CACHE / TRACKING ─────────────────────────────────────────
 
     public function cache(int $ttl = 300): static
     {
         $this->cacheTtl = $ttl;
+        return $this;
+    }
+
+    public function asNoTracking(): static
+    {
+        $this->asNoTracking = true;
         return $this;
     }
 
@@ -193,12 +200,21 @@ class QueryBuilder
     public function get(): array
     {
         $sql = $this->buildSelectSql();
-        $rows = $this->conn->query($sql, $this->params);
+        $rows = $this->em->getConnection()->query($sql, $this->params);
         $entities = $this->hydrateAll($rows);
 
         // Eager load relations
         if (!empty($this->eagerLoads) && !empty($entities)) {
             $this->loadEagerRelations($entities);
+        }
+
+        // Apply identity map tracking unless AsNoTracking
+        if (!$this->asNoTracking) {
+            foreach ($entities as $entity) {
+                // If the entity already exists in identity map, we should arguably merge or ignore.
+                // In LiteORM, we will just track the fresh state if it's not present or attach it.
+                $this->em->internalTrack($entity, $this->meta);
+            }
         }
 
         return $entities;
@@ -319,7 +335,7 @@ class QueryBuilder
     public function count(): int
     {
         $sql = $this->buildAggregateSql('COUNT(*)');
-        $rows = $this->conn->query($sql, $this->params);
+        $rows = $this->em->getConnection()->query($sql, $this->params);
         return (int)($rows[0]['aggregate'] ?? 0);
     }
 
@@ -329,7 +345,7 @@ class QueryBuilder
     public function sum(string $column): float
     {
         $sql = $this->buildAggregateSql("SUM({$column})");
-        $rows = $this->conn->query($sql, $this->params);
+        $rows = $this->em->getConnection()->query($sql, $this->params);
         return (float)($rows[0]['aggregate'] ?? 0);
     }
 
@@ -339,7 +355,7 @@ class QueryBuilder
     public function avg(string $column): float
     {
         $sql = $this->buildAggregateSql("AVG({$column})");
-        $rows = $this->conn->query($sql, $this->params);
+        $rows = $this->em->getConnection()->query($sql, $this->params);
         return (float)($rows[0]['aggregate'] ?? 0);
     }
 
@@ -349,7 +365,7 @@ class QueryBuilder
     public function max(string $column): mixed
     {
         $sql = $this->buildAggregateSql("MAX({$column})");
-        $rows = $this->conn->query($sql, $this->params);
+        $rows = $this->em->getConnection()->query($sql, $this->params);
         return $rows[0]['aggregate'] ?? null;
     }
 
@@ -359,7 +375,7 @@ class QueryBuilder
     public function min(string $column): mixed
     {
         $sql = $this->buildAggregateSql("MIN({$column})");
-        $rows = $this->conn->query($sql, $this->params);
+        $rows = $this->em->getConnection()->query($sql, $this->params);
         return $rows[0]['aggregate'] ?? null;
     }
 
@@ -378,7 +394,7 @@ class QueryBuilder
     {
         $sql = "DELETE FROM {$this->meta->tableName}";
         $sql .= $this->buildWhereSql();
-        return $this->conn->execute($sql, $this->params);
+        return $this->em->getConnection()->execute($sql, $this->params);
     }
 
     /**
@@ -395,7 +411,7 @@ class QueryBuilder
         }
         $sql = "UPDATE {$this->meta->tableName} SET " . implode(', ', $sets);
         $sql .= $this->buildWhereSql();
-        return $this->conn->execute($sql, $this->params);
+        return $this->em->getConnection()->execute($sql, $this->params);
     }
 
     /**
@@ -556,7 +572,7 @@ class QueryBuilder
             $sql .= " ORDER BY {$relation->orderBy}";
         }
 
-        $rows = $this->conn->query($sql, array_values($ids));
+        $rows = $this->em->getConnection()->query($sql, array_values($ids));
 
         // Group by FK
         $grouped = [];
@@ -566,7 +582,7 @@ class QueryBuilder
         }
 
         // Create sub-hydrator for target
-        $targetBuilder = new self($relation->target, $this->conn);
+        $targetBuilder = new self($relation->target, $this->em);
 
         foreach ($entities as $entity) {
             $entityId = $entity->{$pk};
@@ -596,9 +612,9 @@ class QueryBuilder
         $placeholders = implode(',', array_fill(0, count($ids), '?'));
         $sql = "SELECT * FROM {$targetMeta->tableName} WHERE {$targetMeta->primaryKeyColumn} IN ({$placeholders})";
 
-        $rows = $this->conn->query($sql, array_values($ids));
+        $rows = $this->em->getConnection()->query($sql, array_values($ids));
 
-        $targetBuilder = new self($relation->target, $this->conn);
+        $targetBuilder = new self($relation->target, $this->em);
         $indexed = [];
         foreach ($rows as $row) {
             $obj = $targetBuilder->hydrateOne($row);
