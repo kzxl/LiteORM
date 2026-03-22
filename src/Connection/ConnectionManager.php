@@ -8,7 +8,12 @@ use PDO;
 use PDOStatement;
 
 /**
- * Connection manager with read/write splitting support.
+ * Connection manager with read/write splitting, prepared statement cache, and SQL logging.
+ *
+ * Performance optimizations:
+ * - Prepared statement cache: reuse PDOStatement for repeat queries (up to 100)
+ * - SQL timing: all queries are timed via hrtime(true) for nanosecond precision
+ * - Single DSN sharing: avoids duplicate connections for in-memory databases
  */
 class ConnectionManager
 {
@@ -26,6 +31,13 @@ class ConnectionManager
 
     private int $readIndex = 0;
     private int $queryCount = 0;
+
+    /** @var ?callable SQL logger: fn(string $sql, array $params, float $timeMs) */
+    private $sqlLogger = null;
+
+    /** @var PDOStatement[] Prepared statement cache: key => stmt */
+    private array $stmtCache = [];
+    private int $stmtCacheMaxSize = 100;
 
     /**
      * @param string|array{write: string, read: string|string[]} $dsn
@@ -55,6 +67,15 @@ class ConnectionManager
     }
 
     /**
+     * Set SQL logger callback.
+     * @param callable $logger fn(string $sql, array $params, float $timeMs)
+     */
+    public function setSqlLogger(callable $logger): void
+    {
+        $this->sqlLogger = $logger;
+    }
+
+    /**
      * Get write (master) connection.
      */
     public function getWriteConnection(): PDO
@@ -66,13 +87,11 @@ class ConnectionManager
     }
 
     /**
-     * Get read (replica) connection. Round-robin across replicas.
-     * For single DSN setup, returns the same connection as write to avoid
-     * split in-memory databases (SQLite).
+     * Get read (replica) connection.
+     * For single DSN: shares write connection (avoids split in-memory DBs).
      */
     public function getReadConnection(): PDO
     {
-        // If read DSNs are the same as write, share connection
         if (count($this->readDsns) === 1 && $this->readDsns[0] === $this->writeDsn) {
             return $this->getWriteConnection();
         }
@@ -86,15 +105,24 @@ class ConnectionManager
     }
 
     /**
-     * Execute a SELECT query.
+     * Execute a SELECT query with prepared statement cache.
      * @return array<int, array<string, mixed>>
      */
     public function query(string $sql, array $params = []): array
     {
         $this->queryCount++;
-        $stmt = $this->getReadConnection()->prepare($sql);
+        $stmt = $this->getCachedStatement($this->getReadConnection(), $sql);
+
+        $start = hrtime(true);
         $stmt->execute($params);
-        return $stmt->fetchAll();
+        $result = $stmt->fetchAll();
+        $elapsed = (hrtime(true) - $start) / 1e6;
+
+        if ($this->sqlLogger) {
+            ($this->sqlLogger)($sql, $params, $elapsed);
+        }
+
+        return $result;
     }
 
     /**
@@ -103,8 +131,16 @@ class ConnectionManager
     public function execute(string $sql, array $params = []): int
     {
         $this->queryCount++;
-        $stmt = $this->getWriteConnection()->prepare($sql);
+        $stmt = $this->getCachedStatement($this->getWriteConnection(), $sql);
+
+        $start = hrtime(true);
         $stmt->execute($params);
+        $elapsed = (hrtime(true) - $start) / 1e6;
+
+        if ($this->sqlLogger) {
+            ($this->sqlLogger)($sql, $params, $elapsed);
+        }
+
         return $stmt->rowCount();
     }
 
@@ -114,14 +150,19 @@ class ConnectionManager
     public function insert(string $sql, array $params = []): string
     {
         $this->queryCount++;
-        $stmt = $this->getWriteConnection()->prepare($sql);
+        $stmt = $this->getCachedStatement($this->getWriteConnection(), $sql);
+
+        $start = hrtime(true);
         $stmt->execute($params);
+        $elapsed = (hrtime(true) - $start) / 1e6;
+
+        if ($this->sqlLogger) {
+            ($this->sqlLogger)($sql, $params, $elapsed);
+        }
+
         return $this->getWriteConnection()->lastInsertId();
     }
 
-    /**
-     * Begin a transaction on the write connection.
-     */
     public function beginTransaction(): void
     {
         $this->getWriteConnection()->beginTransaction();
@@ -142,9 +183,6 @@ class ConnectionManager
         return $this->writeConnection?->inTransaction() ?? false;
     }
 
-    /**
-     * Total number of queries executed.
-     */
     public function getQueryCount(): int
     {
         return $this->queryCount;
@@ -153,6 +191,28 @@ class ConnectionManager
     public function resetQueryCount(): void
     {
         $this->queryCount = 0;
+    }
+
+    /**
+     * Get or create cached prepared statement.
+     */
+    private function getCachedStatement(PDO $pdo, string $sql): PDOStatement
+    {
+        $key = spl_object_id($pdo) . ':' . $sql;
+
+        if (isset($this->stmtCache[$key])) {
+            return $this->stmtCache[$key];
+        }
+
+        // Evict oldest if cache full (LRU-like)
+        if (count($this->stmtCache) >= $this->stmtCacheMaxSize) {
+            $oldest = array_key_first($this->stmtCache);
+            unset($this->stmtCache[$oldest]);
+        }
+
+        $stmt = $pdo->prepare($sql);
+        $this->stmtCache[$key] = $stmt;
+        return $stmt;
     }
 
     private function createConnection(string $dsn): PDO

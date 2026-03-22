@@ -33,9 +33,10 @@ class EntityManager
     /** @var object[] Entities scheduled for removal */
     private array $removals = [];
 
-    /** @var int N+1 detection query counter per relation */
-    private array $n1Counters = [];
     private bool $debugMode = false;
+
+    /** @var ?callable SQL logger: fn(string $sql, array $params, float $timeMs) */
+    private $sqlLogger = null;
 
     public function __construct(
         string|array|ConnectionManager $connection,
@@ -56,6 +57,31 @@ class EntityManager
     public function setDebugMode(bool $debug): void
     {
         $this->debugMode = $debug;
+    }
+
+    /**
+     * Set SQL logger callback.
+     * Callback signature: fn(string $sql, array $params, float $timeMs)
+     */
+    public function setSqlLogger(callable $logger): void
+    {
+        $this->sqlLogger = $logger;
+        $this->conn->setSqlLogger($logger);
+    }
+
+    /**
+     * Attach an existing entity to the identity map for change tracking.
+     * Like EF Core Attach() — entity is treated as "existing" (will UPDATE on flush, not INSERT).
+     */
+    public function attach(object $entity): void
+    {
+        $class = get_class($entity);
+        $meta = AttributeReader::read($class);
+        $id = $entity->{$meta->primaryKey} ?? null;
+        if ($id === null) {
+            throw new \RuntimeException('Cannot attach entity without primary key value');
+        }
+        $this->track($entity, $meta);
     }
 
     // ─── Find / Query ─────────────────────────────────────────────
@@ -161,9 +187,14 @@ class EntityManager
     {
         $this->conn->beginTransaction();
         try {
-            // 1. Inserts
+            // 1. Batch inserts by class (reuse prepared statement)
+            $insertsByClass = [];
             foreach ($this->inserts as $entity) {
-                $this->executeInsert($entity);
+                $class = get_class($entity);
+                $insertsByClass[$class][] = $entity;
+            }
+            foreach ($insertsByClass as $class => $entities) {
+                $this->executeBatchInsert($class, $entities);
             }
             $this->inserts = [];
 
@@ -262,12 +293,56 @@ class EntityManager
 
     // ─── Internal ─────────────────────────────────────────────────
 
-    private function executeInsert(object $entity): void
+    /**
+     * Batch insert entities of the same class, reusing prepared statement.
+     * @param object[] $entities
+     */
+    private function executeBatchInsert(string $class, array $entities): void
     {
-        $class = get_class($entity);
         $meta = AttributeReader::read($class);
 
-        // Set timestamps
+        // Build SQL template once
+        $columns = [];
+        $placeholders = [];
+        foreach ($meta->columns as $col) {
+            if ($col->isAutoIncrement) continue;
+            $columns[] = $col->columnName;
+            $placeholders[] = ":{$col->columnName}";
+        }
+        $sql = "INSERT INTO {$meta->tableName} (" . implode(', ', $columns) . ") VALUES (" . implode(', ', $placeholders) . ")";
+
+        // Prepare once, execute many
+        $stmt = $this->conn->getWriteConnection()->prepare($sql);
+
+        foreach ($entities as $entity) {
+            // Set timestamps
+            $this->applyTimestamps($entity, $meta);
+
+            $params = [];
+            foreach ($meta->columns as $col) {
+                if ($col->isAutoIncrement) continue;
+                $params[$col->columnName] = $this->extractValue($entity, $col);
+            }
+
+            $start = hrtime(true);
+            $stmt->execute($params);
+            $elapsed = (hrtime(true) - $start) / 1e6;
+
+            if ($this->sqlLogger) {
+                ($this->sqlLogger)($sql, $params, $elapsed);
+            }
+
+            // Set auto-increment ID
+            if ($meta->hasAutoIncrement && $meta->primaryKey) {
+                $entity->{$meta->primaryKey} = (int) $this->conn->getWriteConnection()->lastInsertId();
+            }
+
+            $this->track($entity, $meta);
+        }
+    }
+
+    private function applyTimestamps(object $entity, EntityMetadata $meta): void
+    {
         if ($meta->createdAtColumn) {
             $col = $meta->getColumnByName($meta->createdAtColumn);
             if ($col && !isset($entity->{$col->propertyName})) {
@@ -280,28 +355,6 @@ class EntityManager
                 $entity->{$col->propertyName} = new \DateTimeImmutable();
             }
         }
-
-        $columns = [];
-        $placeholders = [];
-        $params = [];
-
-        foreach ($meta->columns as $col) {
-            if ($col->isAutoIncrement) continue;
-            $columns[] = $col->columnName;
-            $placeholders[] = ":{$col->columnName}";
-            $params[$col->columnName] = $this->extractValue($entity, $col);
-        }
-
-        $sql = "INSERT INTO {$meta->tableName} (" . implode(', ', $columns) . ") VALUES (" . implode(', ', $placeholders) . ")";
-        $lastId = $this->conn->insert($sql, $params);
-
-        // Set auto-increment ID on entity
-        if ($meta->hasAutoIncrement && $meta->primaryKey) {
-            $entity->{$meta->primaryKey} = (int) $lastId;
-        }
-
-        // Track the newly inserted entity
-        $this->track($entity, $meta);
     }
 
     private function executeUpdate(object $entity, EntityMetadata $meta, int|string $id): void

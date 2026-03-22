@@ -20,6 +20,27 @@ Lightweight, high-performance PHP 8.2+ ORM with native attribute mapping, LINQ-s
 | **Read/Write Splitting** | Auto-route SELECT to read replicas |
 | **Entity Generator** | Reverse-engineer DB tables → PHP entity classes |
 | **Auto Timestamps** | `#[CreatedAt]`, `#[UpdatedAt]` auto-managed |
+
+---
+
+## ⚠️ PHP Version Requirements
+
+> **Minimum: PHP 8.2+** (PHP 7.4 is NOT supported)
+
+LiteORM relies heavily on modern PHP features that have no backwards-compatible alternatives:
+
+| Feature Used | Minimum PHP | Why? |
+|---|---|---|
+| Native Attributes (`#[Entity]`) | 8.0 | Core mapping mechanism — replaces XML/YAML/annotations |
+| `readonly` properties | 8.1 | Immutable metadata objects |
+| Constructor property promotion | 8.0 | Clean attribute constructors |
+| Union types (`string\|array`) | 8.0 | Flexible API signatures |
+| `match` expression | 8.0 | Type resolution, SQL generation |
+| Enums, `str_ends_with()`, etc. | 8.0–8.2 | Various utility functions |
+
+> [!IMPORTANT]
+> PHP 7.4 reached End-of-Life on November 28, 2022. If you need PHP 7.x support,
+> consider Doctrine ORM (annotation-based) or Eloquent (convention-based).
 | **Aggregates** | `count()`, `sum()`, `avg()`, `max()`, `min()` |
 
 ---
