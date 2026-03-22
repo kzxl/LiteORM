@@ -41,7 +41,26 @@ LiteORM relies heavily on modern PHP features that have no backwards-compatible 
 > [!IMPORTANT]
 > PHP 7.4 reached End-of-Life on November 28, 2022. If you need PHP 7.x support,
 > consider Doctrine ORM (annotation-based) or Eloquent (convention-based).
-| **Aggregates** | `count()`, `sum()`, `avg()`, `max()`, `min()` |
+
+---
+
+## ⚖️ Ưu & Nhược Điểm (Pros & Cons)
+
+### 👍 Ưu điểm (Pros)
+- **Hiệu năng cực cao (High Performance)**: Cơ chế **Prepared Statement Cache** (tái sử dụng PDOStatement) và **Batch Insert** (O(1) prepare) giúp query lặp lại cực khứ.
+- **Không cần cấu hình (Zero Config)**: Khai báo mapping trực tiếp trên class bằng **PHP 8.2 Attributes** (`#[Entity]`, `#[Column]`), code gập gọn, dễ đọc.
+- **Tối ưu RAM & DB (Memory & DB Optimized)**: 
+  - **Identity Map** đảm bảo mỗi ID chép ra 1 instance duy nhất trên memory.
+  - **Dirty Checking** (chụp snapshot) đảm bảo chỉ gen câu lệnh `UPDATE` cho những trường (fields) thực sự bị sửa đổi.
+- **Ngăn chặn triệt để N+1 Queries**: Eager Loading (`with()`) sử dụng cơ chế gom ID (`WHERE IN`) để select dữ liệu quan hệ, chỉ tốn đúng 2 query thay vì N+1.
+- **Trải nghiệm code mượt mà như C# LINQ**: Collection phong phú các method như `firstOrFail()`, `single()`, `whereNotIn()` dành cho developer quen C# / LINQ.
+- **Tạo Entity tự động (Entity Generator)**: Có sẵn tool reverse-engineering từ DB ra PHP entity models tích hợp đầy đủ Attributes.
+
+### 👎 Nhược điểm (Cons)
+- **Rào cản môi trường**: Yêu cầu bắt buộc **PHP 8.2+**, hoàn toàn không tương thích với dự án PHP 7.x cũ.
+- **Chưa có Database Migrations**: Hiện framework chỉ có script `createTable()` cơ bản, chưa có hệ thống flow chạy down/up versions (như Phinx, Doctrine Migrations hay Laravel).
+- **Chưa hỗ trợ AsNoTracking**: Các truy vấn fetch entity hiện đa số vẫn đang tracking vào Unit of Work. Đối với context "Chỉ đọc", điều này có thể chiếm một khoản snapshot RAM không cần thiết.
+- **Database Dialects**: Mặc dù hoạt động hoàn hảo với MySQL, SQLite. Tuy nhiên vì QueryBuilder đang dùng chuỗi nối khá cơ bản, khi query phức tạp với SQL Server hoặc PostgreSQL có thể chưa cover hết 100% dialect strings.
 
 ---
 
