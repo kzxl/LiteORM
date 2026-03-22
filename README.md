@@ -52,15 +52,15 @@ LiteORM relies heavily on modern PHP features that have no backwards-compatible 
 - **Tối ưu RAM & DB (Memory & DB Optimized)**: 
   - **Identity Map** đảm bảo mỗi ID chép ra 1 instance duy nhất trên memory.
   - **Dirty Checking** (chụp snapshot) đảm bảo chỉ gen câu lệnh `UPDATE` cho những trường (fields) thực sự bị sửa đổi.
+  - **AsNoTracking**: Hỗ trợ ngắt tracking hoàn toàn cho các truy vấn chỉ đọc (read-only), tiết kiệm CPU và bộ nhớ cực tốt.
 - **Ngăn chặn triệt để N+1 Queries**: Eager Loading (`with()`) sử dụng cơ chế gom ID (`WHERE IN`) để select dữ liệu quan hệ, chỉ tốn đúng 2 query thay vì N+1.
 - **Trải nghiệm code mượt mà như C# LINQ**: Collection phong phú các method như `firstOrFail()`, `single()`, `whereNotIn()` dành cho developer quen C# / LINQ.
-- **Tạo Entity tự động (Entity Generator)**: Có sẵn tool reverse-engineering từ DB ra PHP entity models tích hợp đầy đủ Attributes.
+- **Tạo Entity tự động (Entity Generator CLI)**: Có sẵn tool console line (`bin/liteorm generate`) reverse-engineering từ Database thẳng ra file PHP Entity tích hợp đầy đủ Attributes.
 
 ### 👎 Nhược điểm (Cons)
 - **Rào cản môi trường**: Yêu cầu bắt buộc **PHP 8.2+**, hoàn toàn không tương thích với dự án PHP 7.x cũ.
-- **Chưa có Database Migrations**: Hiện framework chỉ có script `createTable()` cơ bản, chưa có hệ thống flow chạy down/up versions (như Phinx, Doctrine Migrations hay Laravel).
-- **Chưa hỗ trợ AsNoTracking**: Các truy vấn fetch entity hiện đa số vẫn đang tracking vào Unit of Work. Đối với context "Chỉ đọc", điều này có thể chiếm một khoản snapshot RAM không cần thiết.
-- **Database Dialects**: Mặc dù hoạt động hoàn hảo với MySQL, SQLite. Tuy nhiên vì QueryBuilder đang dùng chuỗi nối khá cơ bản, khi query phức tạp với SQL Server hoặc PostgreSQL có thể chưa cover hết 100% dialect strings.
+- **Chưa có Versioning Migrations**: Framework mới chỉ hỗ trợ build bảng (`createTable()`) và gen Entity CLI. Chưa có flow chạy file Up/Down migrations (như Phinx hay Laravel).
+- **Database Dialects**: Mặc dù hoạt động hoàn hảo với MySQL, SQLite nhưng vì QueryBuilder đang dùng toán tử khá tiêu chuẩn, các query filter có syntax độc lạ trên SQL Server / PostgreSQL có thể cần custom thêm.
 
 ---
 
