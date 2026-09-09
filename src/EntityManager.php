@@ -38,6 +38,9 @@ class EntityManager
     /** @var ?callable SQL logger: fn(string $sql, array $params, float $timeMs) */
     private $sqlLogger = null;
 
+    /** @var array<string, list<callable>> Event listeners */
+    private array $eventListeners = [];
+
     public function __construct(
         string|array|ConnectionManager $connection,
         ?string $username = null,
@@ -67,6 +70,16 @@ class EntityManager
     {
         $this->sqlLogger = $logger;
         $this->conn->setSqlLogger($logger);
+    }
+
+    /**
+     * Register an entity lifecycle event listener.
+     * Events: 'insert', 'update', 'delete', or '*' for all events.
+     * Callback signature: fn(string $event, object $entity, ?array $oldValues, ?array $newValues)
+     */
+    public function on(string $event, callable $listener): void
+    {
+        $this->eventListeners[$event][] = $listener;
     }
 
     /**
@@ -370,6 +383,8 @@ class EntityManager
             }
 
             $this->internalTrack($entity, $meta);
+            $newSnapshot = $this->snapshots[$class][$entity->{$meta->primaryKey}] ?? $this->takeSnapshot($entity, $meta);
+            $this->dispatchEntityEvent('insert', $entity, null, $newSnapshot);
         }
     }
 
@@ -427,7 +442,11 @@ class EntityManager
         $this->conn->execute($sql, $params);
 
         // Update snapshot
-        $this->snapshots[$class][$id] = $this->takeSnapshot($entity, $meta);
+        $oldSnapshot = $snapshot;
+        $newSnapshot = $this->takeSnapshot($entity, $meta);
+        $this->snapshots[$class][$id] = $newSnapshot;
+
+        $this->dispatchEntityEvent('update', $entity, $oldSnapshot, $newSnapshot);
     }
 
     private function executeDelete(object $entity): void
@@ -440,9 +459,25 @@ class EntityManager
         $sql = "DELETE FROM {$meta->tableName} WHERE {$meta->primaryKeyColumn} = :id";
         $this->conn->execute($sql, ['id' => $id]);
 
+        $oldSnapshot = $this->snapshots[$class][$id] ?? null;
+
         // Remove from identity map
         unset($this->identityMap[$class][$id]);
         unset($this->snapshots[$class][$id]);
+
+        $this->dispatchEntityEvent('delete', $entity, $oldSnapshot, null);
+    }
+
+    private function dispatchEntityEvent(string $event, object $entity, ?array $old, ?array $new): void
+    {
+        foreach ($this->eventListeners[$event] ?? [] as $listener) {
+            $listener($event, $entity, $old, $new);
+        }
+        if ($event !== '*') {
+            foreach ($this->eventListeners['*'] ?? [] as $listener) {
+                $listener($event, $entity, $old, $new);
+            }
+        }
     }
 
     /**
