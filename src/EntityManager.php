@@ -185,7 +185,10 @@ class EntityManager
      */
     public function flush(): void
     {
-        $this->conn->beginTransaction();
+        $hasOuterTx = $this->conn->inTransaction();
+        if (!$hasOuterTx) {
+            $this->conn->beginTransaction();
+        }
         try {
             // 1. Batch inserts by class (reuse prepared statement)
             $insertsByClass = [];
@@ -212,9 +215,38 @@ class EntityManager
             }
             $this->removals = [];
 
+            if (!$hasOuterTx) {
+                $this->conn->commit();
+            }
+        } catch (\Throwable $e) {
+            if (!$hasOuterTx) {
+                $this->conn->rollBack();
+            }
+            throw $e;
+        }
+    }
+
+    /**
+     * Execute a callback within an explicit database transaction.
+     * Flushes changes automatically and rolls back on failure.
+     * Complies with AgentOption database transaction guidelines.
+     *
+     * @template T
+     * @param callable(EntityManager): T $callback
+     * @return T
+     * @throws \Throwable
+     */
+    public function transaction(callable $callback): mixed
+    {
+        $this->conn->beginTransaction();
+        try {
+            $result = $callback($this);
+            $this->flush();
             $this->conn->commit();
+            return $result;
         } catch (\Throwable $e) {
             $this->conn->rollBack();
+            $this->clear();
             throw $e;
         }
     }

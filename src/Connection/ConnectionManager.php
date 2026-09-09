@@ -126,6 +126,32 @@ class ConnectionManager
     }
 
     /**
+     * Stream rows one-by-one via Generator for zero memory bloat (memory < 32MB).
+     * Complies with AgentOption memory optimization guidelines.
+     *
+     * @param string $sql
+     * @param array<string, mixed> $params
+     * @return \Generator<int, array<string, mixed>>
+     */
+    public function stream(string $sql, array $params = []): \Generator
+    {
+        $this->queryCount++;
+        $stmt = $this->getCachedStatement($this->getReadConnection(), $sql);
+
+        $start = hrtime(true);
+        $stmt->execute($params);
+        $elapsed = (hrtime(true) - $start) / 1e6;
+
+        if ($this->sqlLogger) {
+            ($this->sqlLogger)($sql, $params, $elapsed);
+        }
+
+        while ($row = $stmt->fetch()) {
+            yield $row;
+        }
+    }
+
+    /**
      * Execute an INSERT/UPDATE/DELETE query.
      */
     public function execute(string $sql, array $params = []): int

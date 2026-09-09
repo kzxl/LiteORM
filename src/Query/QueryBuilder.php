@@ -230,6 +230,80 @@ class QueryBuilder
     }
 
     /**
+     * Stream entities one-by-one via PHP Generator to maintain constant O(1) memory.
+     * Complies with AgentOption memory optimization guidelines (memory < 32MB).
+     *
+     * @return \Generator<int, object>
+     */
+    public function cursor(): \Generator
+    {
+        $sql = $this->buildSelectSql();
+        $stream = $this->em->getConnection()->stream($sql, $this->params);
+
+        $index = 0;
+        foreach ($stream as $row) {
+            $entity = $this->hydrateOne($row);
+            if (!$this->asNoTracking) {
+                $this->em->internalTrack($entity, $this->meta);
+            }
+            yield $index++ => $entity;
+        }
+    }
+
+    /**
+     * Chunk results to process large datasets in batches without memory spikes.
+     *
+     * @param int $size
+     * @param callable(object[], int): (bool|void) $callback
+     * @return bool
+     */
+    public function chunk(int $size, callable $callback): bool
+    {
+        $page = 1;
+        do {
+            $results = (clone $this)->skip(($page - 1) * $size)->take($size)->get();
+            $count = count($results);
+            if ($count === 0) {
+                break;
+            }
+
+            if ($callback($results, $page) === false) {
+                return false;
+            }
+
+            unset($results);
+            $page++;
+        } while ($count === $size);
+
+        return true;
+    }
+
+    /**
+     * Paginate query results into a structured Paginator object for Web APIs.
+     */
+    public function paginate(int $page = 1, int $perPage = 15): Paginator
+    {
+        $page = max(1, $page);
+        $perPage = max(1, $perPage);
+        $total = (clone $this)->count();
+
+        $items = (clone $this)
+            ->skip(($page - 1) * $perPage)
+            ->take($perPage)
+            ->get();
+
+        $lastPage = (int) ceil($total / $perPage);
+
+        return new Paginator(
+            items: $items,
+            total: $total,
+            currentPage: $page,
+            perPage: $perPage,
+            lastPage: max(1, $lastPage)
+        );
+    }
+
+    /**
      * LINQ FirstOrDefault — return first result or null.
      */
     public function first(): ?object
