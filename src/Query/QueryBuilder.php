@@ -28,6 +28,8 @@ class QueryBuilder
     private ?string $havingVal = null;
     private bool $distinctFlag = false;
     private bool $asNoTracking = false;
+    private bool $withTrashed = false;
+    private bool $onlyTrashed = false;
     private int $paramIndex = 0;
 
     public function __construct(
@@ -67,6 +69,25 @@ class QueryBuilder
     public function whereNotNull(string $column): static
     {
         $this->wheres[] = ['type' => 'AND', 'sql' => "{$column} IS NOT NULL"];
+        return $this;
+    }
+
+    /**
+     * Include soft-deleted entities in query results.
+     */
+    public function withTrashed(): static
+    {
+        $this->withTrashed = true;
+        return $this;
+    }
+
+    /**
+     * Only return soft-deleted entities in query results.
+     */
+    public function onlyTrashed(): static
+    {
+        $this->onlyTrashed = true;
+        $this->withTrashed = true;
         return $this;
     }
 
@@ -546,10 +567,21 @@ class QueryBuilder
 
     private function buildWhereSql(): string
     {
-        if (empty($this->wheres)) return '';
+        $wheres = $this->wheres;
+
+        if ($this->meta->isSoftDeletable && $this->meta->softDeleteColumn) {
+            $col = "{$this->meta->tableName}.{$this->meta->softDeleteColumn}";
+            if ($this->onlyTrashed) {
+                $wheres[] = ['type' => 'AND', 'sql' => "{$col} IS NOT NULL"];
+            } elseif (!$this->withTrashed) {
+                $wheres[] = ['type' => 'AND', 'sql' => "{$col} IS NULL"];
+            }
+        }
+
+        if (empty($wheres)) return '';
 
         $parts = [];
-        foreach ($this->wheres as $i => $w) {
+        foreach ($wheres as $i => $w) {
             if ($i === 0) {
                 $parts[] = $w['sql'];
             } else {

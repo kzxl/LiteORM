@@ -209,6 +209,21 @@ class ConnectionManager
         return $this->writeConnection?->inTransaction() ?? false;
     }
 
+    public function savepoint(string $name): void
+    {
+        $this->getWriteConnection()->exec("SAVEPOINT {$name}");
+    }
+
+    public function rollbackToSavepoint(string $name): void
+    {
+        $this->getWriteConnection()->exec("ROLLBACK TO SAVEPOINT {$name}");
+    }
+
+    public function releaseSavepoint(string $name): void
+    {
+        $this->getWriteConnection()->exec("RELEASE SAVEPOINT {$name}");
+    }
+
     public function getQueryCount(): int
     {
         return $this->queryCount;

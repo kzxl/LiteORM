@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 namespace LiteORM\Metadata;
 
-use LiteORM\Attribute\{Entity, Table, Column, Id, AutoIncrement, CreatedAt, UpdatedAt, HasMany, BelongsTo, HasOne};
+use LiteORM\Attribute\{Entity, Table, Column, Id, AutoIncrement, CreatedAt, UpdatedAt, HasMany, BelongsTo, HasOne, SoftDelete};
 use ReflectionClass;
 use ReflectionProperty;
 use ReflectionNamedType;
@@ -33,6 +33,12 @@ class AttributeReader
             : self::classToTableName($ref->getShortName());
 
         $meta = new EntityMetadata($className, $tableName);
+
+        $softDeleteAttrs = $ref->getAttributes(SoftDelete::class);
+        if (!empty($softDeleteAttrs)) {
+            $meta->isSoftDeletable = true;
+            $meta->softDeleteColumn = $softDeleteAttrs[0]->newInstance()->column;
+        }
 
         foreach ($ref->getProperties(ReflectionProperty::IS_PUBLIC) as $prop) {
             $relation = self::readRelation($prop);

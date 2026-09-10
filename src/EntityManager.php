@@ -33,6 +33,9 @@ class EntityManager
     /** @var object[] Entities scheduled for removal */
     private array $removals = [];
 
+    /** @var object[] Entities scheduled for permanent removal (force delete) */
+    private array $forceRemovals = [];
+
     private bool $debugMode = false;
 
     /** @var ?callable SQL logger: fn(string $sql, array $params, float $timeMs) */
@@ -104,13 +107,26 @@ class EntityManager
      */
     public function find(string $class, int|string $id): ?object
     {
+        $meta = AttributeReader::read($class);
+
         // Check identity map first
         if (isset($this->identityMap[$class][$id])) {
-            return $this->identityMap[$class][$id];
+            $cached = $this->identityMap[$class][$id];
+            if ($meta->isSoftDeletable && $meta->softDeleteColumn) {
+                $col = $meta->getColumnByName($meta->softDeleteColumn);
+                $deletedAt = $col ? ($cached->{$col->propertyName} ?? null) : null;
+                if ($deletedAt !== null) {
+                    return null; // Entity is soft-deleted
+                }
+            }
+            return $cached;
         }
 
-        $meta = AttributeReader::read($class);
-        $sql = "SELECT * FROM {$meta->tableName} WHERE {$meta->primaryKeyColumn} = :id LIMIT 1";
+        $whereSql = "{$meta->primaryKeyColumn} = :id";
+        if ($meta->isSoftDeletable && $meta->softDeleteColumn) {
+            $whereSql .= " AND {$meta->softDeleteColumn} IS NULL";
+        }
+        $sql = "SELECT * FROM {$meta->tableName} WHERE {$whereSql} LIMIT 1";
         $rows = $this->conn->query($sql, ['id' => $id]);
 
         if (empty($rows)) return null;
@@ -128,7 +144,8 @@ class EntityManager
     public function findAll(string $class): array
     {
         $meta = AttributeReader::read($class);
-        $sql = "SELECT * FROM {$meta->tableName}";
+        $whereSql = ($meta->isSoftDeletable && $meta->softDeleteColumn) ? " WHERE {$meta->softDeleteColumn} IS NULL" : "";
+        $sql = "SELECT * FROM {$meta->tableName}{$whereSql}";
         $rows = $this->conn->query($sql);
 
         $entities = [];
@@ -146,6 +163,14 @@ class EntityManager
     public function query(string $class): QueryBuilder
     {
         return new QueryBuilder($class, $this);
+    }
+
+    /**
+     * Alias for query() — creates a fluent query builder.
+     */
+    public function createQueryBuilder(string $class): QueryBuilder
+    {
+        return $this->query($class);
     }
 
     /**
@@ -183,11 +208,76 @@ class EntityManager
     }
 
     /**
-     * Schedule entity for removal.
+     * Schedule entity for removal. If entity has #[SoftDelete], sets deleted_at timestamp.
      */
     public function remove(object $entity): void
     {
         $this->removals[] = $entity;
+    }
+
+    /**
+     * Schedule entity for permanent physical deletion, even if #[SoftDelete] is enabled.
+     */
+    public function forceRemove(object $entity): void
+    {
+        $this->forceRemovals[] = $entity;
+    }
+
+    /**
+     * Immediately permanently delete an entity.
+     */
+    public function forceDelete(object $entity): void
+    {
+        $this->executeDelete($entity, force: true);
+    }
+
+    /**
+     * Restore a soft-deleted entity by clearing its deleted_at timestamp.
+     */
+    public function restore(object $entity): void
+    {
+        $class = get_class($entity);
+        $meta = AttributeReader::read($class);
+        if (!$meta->isSoftDeletable || !$meta->softDeleteColumn) {
+            throw new \LogicException("Entity {$class} does not have #[SoftDelete] attribute.");
+        }
+        $id = $entity->{$meta->primaryKey} ?? null;
+        if ($id === null) return;
+
+        $col = $meta->getColumnByName($meta->softDeleteColumn);
+        if ($col) {
+            $entity->{$col->propertyName} = null;
+        }
+
+        $sql = "UPDATE {$meta->tableName} SET {$meta->softDeleteColumn} = NULL WHERE {$meta->primaryKeyColumn} = :id";
+        $this->conn->execute($sql, ['id' => $id]);
+
+        if (isset($this->snapshots[$class][$id])) {
+            $this->snapshots[$class][$id][$meta->softDeleteColumn] = null;
+        }
+
+        // Keep in identity map
+        $this->identityMap[$class][$id] = $entity;
+
+        $this->dispatchEntityEvent('restore', $entity, null, $this->snapshots[$class][$id] ?? null);
+    }
+
+    /**
+     * Savepoint transaction support.
+     */
+    public function savepoint(string $name): void
+    {
+        $this->conn->savepoint($name);
+    }
+
+    public function rollbackToSavepoint(string $name): void
+    {
+        $this->conn->rollbackToSavepoint($name);
+    }
+
+    public function releaseSavepoint(string $name): void
+    {
+        $this->conn->releaseSavepoint($name);
     }
 
     // ─── Flush (Unit of Work) ─────────────────────────────────────
@@ -222,11 +312,16 @@ class EntityManager
                 }
             }
 
-            // 3. Deletes
+            // 3. Deletes & Soft Deletes
             foreach ($this->removals as $entity) {
-                $this->executeDelete($entity);
+                $this->executeDelete($entity, force: false);
             }
             $this->removals = [];
+
+            foreach ($this->forceRemovals as $entity) {
+                $this->executeDelete($entity, force: true);
+            }
+            $this->forceRemovals = [];
 
             if (!$hasOuterTx) {
                 $this->conn->commit();
@@ -309,6 +404,10 @@ class EntityManager
                 $colSql .= ' DEFAULT ' . (is_string($col->default) ? "'{$col->default}'" : $col->default);
             }
             $columns[] = $colSql;
+        }
+
+        if ($meta->isSoftDeletable && $meta->softDeleteColumn && !$meta->getColumnByName($meta->softDeleteColumn)) {
+            $columns[] = "{$meta->softDeleteColumn} DATETIME DEFAULT NULL";
         }
 
         $sql = "CREATE TABLE IF NOT EXISTS {$meta->tableName} (\n  " . implode(",\n  ", $columns) . "\n)";
@@ -449,17 +548,37 @@ class EntityManager
         $this->dispatchEntityEvent('update', $entity, $oldSnapshot, $newSnapshot);
     }
 
-    private function executeDelete(object $entity): void
+    private function executeDelete(object $entity, bool $force = false): void
     {
         $class = get_class($entity);
         $meta = AttributeReader::read($class);
         $id = $entity->{$meta->primaryKey} ?? null;
         if ($id === null) return;
 
+        $oldSnapshot = $this->snapshots[$class][$id] ?? null;
+
+        if ($meta->isSoftDeletable && $meta->softDeleteColumn && !$force) {
+            $now = (new \DateTimeImmutable())->format('Y-m-d H:i:s');
+            $col = $meta->getColumnByName($meta->softDeleteColumn);
+            if ($col) {
+                $entity->{$col->propertyName} = new \DateTimeImmutable($now);
+            }
+            $sql = "UPDATE {$meta->tableName} SET {$meta->softDeleteColumn} = :deleted_at WHERE {$meta->primaryKeyColumn} = :id";
+            $this->conn->execute($sql, ['deleted_at' => $now, 'id' => $id]);
+
+            if (isset($this->snapshots[$class][$id])) {
+                $this->snapshots[$class][$id][$meta->softDeleteColumn] = $now;
+            }
+
+            // Remove from active identity map so regular find() won't return it
+            unset($this->identityMap[$class][$id]);
+
+            $this->dispatchEntityEvent('soft_delete', $entity, $oldSnapshot, $this->snapshots[$class][$id] ?? null);
+            return;
+        }
+
         $sql = "DELETE FROM {$meta->tableName} WHERE {$meta->primaryKeyColumn} = :id";
         $this->conn->execute($sql, ['id' => $id]);
-
-        $oldSnapshot = $this->snapshots[$class][$id] ?? null;
 
         // Remove from identity map
         unset($this->identityMap[$class][$id]);

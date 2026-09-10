@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 namespace LiteORM\Tests;
 
-use LiteORM\Attribute\{Entity, Table, Column, Id, AutoIncrement, CreatedAt, UpdatedAt, HasMany, BelongsTo};
+use LiteORM\Attribute\{Entity, Table, Column, Id, AutoIncrement, CreatedAt, UpdatedAt, HasMany, BelongsTo, SoftDelete};
 
 // ─── Test Entities ────────────────────────────────────────────
 
@@ -71,4 +71,19 @@ class Category
 
     #[Column(nullable: true)]
     public ?string $description = null;
+}
+
+#[Entity]
+#[Table('soft_articles')]
+#[SoftDelete(column: 'deleted_at')]
+class SoftArticle
+{
+    #[Id, AutoIncrement]
+    public int $id;
+
+    #[Column]
+    public string $title;
+
+    #[Column(nullable: true)]
+    public ?\DateTimeImmutable $deleted_at = null;
 }

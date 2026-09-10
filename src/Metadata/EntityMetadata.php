@@ -17,6 +17,8 @@ class EntityMetadata
     public bool $hasAutoIncrement = false;
     public ?string $createdAtColumn = null;
     public ?string $updatedAtColumn = null;
+    public bool $isSoftDeletable = false;
+    public ?string $softDeleteColumn = null;
 
     public function __construct(
         public readonly string $className,
