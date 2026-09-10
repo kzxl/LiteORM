@@ -67,7 +67,7 @@ LiteORM relies heavily on modern PHP features that have no backwards-compatible 
 ## 📦 Installation
 
 ```bash
-composer require kzxl/liteorm
+composer require kzxl/lite-orm
 ```
 
 ## 🚀 Quick Start
@@ -301,4 +301,4 @@ vendor/bin/phpunit
 
 ## 📄 License
 
-Apache License 2.0 — see [LICENSE](LICENSE).
+MIT License — see [LICENSE](LICENSE).

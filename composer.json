@@ -1,9 +1,34 @@
 {
-    "name": "kzxl/liteorm",
-    "description": "High-performance PHP 8.2+ ORM with zero-reflection runtime, fluent query builder, and built-in caching",
+    "name": "kzxl/lite-orm",
+    "description": "High-performance, lightweight PHP 8.2+ ORM with Unit of Work, snapshot dirty checking, LINQ-style query builder, and batch eager loading.",
     "type": "library",
-    "license": "Apache-2.0",
+    "license": "MIT",
+    "homepage": "https://github.com/kzxl/LiteORM",
+    "support": {
+        "issues": "https://github.com/kzxl/LiteORM/issues",
+        "source": "https://github.com/kzxl/LiteORM"
+    },
+    "authors": [
+        {
+            "name": "Phong Vo",
+            "email": "phong.vo@kzxl.com"
+        }
+    ],
+    "keywords": [
+        "orm",
+        "database",
+        "query-builder",
+        "linq",
+        "eager-loading",
+        "unit-of-work",
+        "php82",
+        "sqlite",
+        "mysql"
+    ],
     "minimum-stability": "stable",
+    "replace": {
+        "kzxl/liteorm": "self.version"
+    },
     "require": {
         "php": ">=8.2",
         "ext-pdo": "*",
