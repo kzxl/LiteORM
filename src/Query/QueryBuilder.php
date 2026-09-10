@@ -629,6 +629,8 @@ class QueryBuilder
                 $this->eagerLoadHasMany($entities, $relation);
             } elseif ($relation->type === 'belongsTo') {
                 $this->eagerLoadBelongsTo($entities, $relation);
+            } elseif ($relation->type === 'hasOne') {
+                $this->eagerLoadHasOne($entities, $relation);
             }
         }
     }
@@ -698,6 +700,33 @@ class QueryBuilder
         foreach ($entities as $entity) {
             $fkVal = $entity->{$fkProp} ?? null;
             $entity->{$relation->propertyName} = $indexed[$fkVal] ?? null;
+        }
+    }
+
+    private function eagerLoadHasOne(array &$entities, \LiteORM\Metadata\RelationMetadata $relation): void
+    {
+        $pk = $this->meta->primaryKey;
+        $ids = array_filter(array_map(fn($e) => $e->{$pk} ?? null, $entities));
+        if (empty($ids)) return;
+
+        $targetMeta = AttributeReader::read($relation->target);
+        $placeholders = implode(',', array_fill(0, count($ids), '?'));
+        $sql = "SELECT * FROM {$targetMeta->tableName} WHERE {$relation->foreignKey} IN ({$placeholders})";
+
+        $rows = $this->em->getConnection()->query($sql, array_values($ids));
+
+        $targetBuilder = new self($relation->target, $this->em);
+        $indexed = [];
+        foreach ($rows as $row) {
+            $fkValue = $row[$relation->foreignKey];
+            if (!isset($indexed[$fkValue])) {
+                $indexed[$fkValue] = $targetBuilder->hydrateOne($row);
+            }
+        }
+
+        foreach ($entities as $entity) {
+            $entityId = $entity->{$pk} ?? null;
+            $entity->{$relation->propertyName} = $indexed[$entityId] ?? null;
         }
     }
 

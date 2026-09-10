@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 namespace LiteORM\Metadata;
 
-use LiteORM\Attribute\{Entity, Table, Column, Id, AutoIncrement, CreatedAt, UpdatedAt, HasMany, BelongsTo};
+use LiteORM\Attribute\{Entity, Table, Column, Id, AutoIncrement, CreatedAt, UpdatedAt, HasMany, BelongsTo, HasOne};
 use ReflectionClass;
 use ReflectionProperty;
 use ReflectionNamedType;
@@ -119,6 +119,17 @@ class AttributeReader
                 type: 'belongsTo',
                 target: $attr->target,
                 foreignKey: $fk,
+            );
+        }
+
+        $hasOne = $prop->getAttributes(HasOne::class);
+        if (!empty($hasOne)) {
+            $attr = $hasOne[0]->newInstance();
+            return new RelationMetadata(
+                propertyName: $prop->getName(),
+                type: 'hasOne',
+                target: $attr->target,
+                foreignKey: $attr->foreignKey,
             );
         }
 
