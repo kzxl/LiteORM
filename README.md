@@ -44,23 +44,22 @@ LiteORM relies heavily on modern PHP features that have no backwards-compatible 
 
 ---
 
-## ⚖️ Ưu & Nhược Điểm (Pros & Cons)
+## ⚖️ Architectural Advantages & Considerations
 
-### 👍 Ưu điểm (Pros)
-- **Hiệu năng cực cao (High Performance)**: Cơ chế **Prepared Statement Cache** (tái sử dụng PDOStatement) và **Batch Insert** (O(1) prepare) giúp query lặp lại cực khứ.
-- **Không cần cấu hình (Zero Config)**: Khai báo mapping trực tiếp trên class bằng **PHP 8.2 Attributes** (`#[Entity]`, `#[Column]`), code gập gọn, dễ đọc.
-- **Tối ưu RAM & DB (Memory & DB Optimized)**: 
-  - **Identity Map** đảm bảo mỗi ID chép ra 1 instance duy nhất trên memory.
-  - **Dirty Checking** (chụp snapshot) đảm bảo chỉ gen câu lệnh `UPDATE` cho những trường (fields) thực sự bị sửa đổi.
-  - **AsNoTracking**: Hỗ trợ ngắt tracking hoàn toàn cho các truy vấn chỉ đọc (read-only), tiết kiệm CPU và bộ nhớ cực tốt.
-- **Ngăn chặn triệt để N+1 Queries**: Eager Loading (`with()`) sử dụng cơ chế gom ID (`WHERE IN`) để select dữ liệu quan hệ, chỉ tốn đúng 2 query thay vì N+1.
-- **Trải nghiệm code mượt mà như C# LINQ**: Collection phong phú các method như `firstOrFail()`, `single()`, `whereNotIn()` dành cho developer quen C# / LINQ.
-- **Tạo Entity tự động (Entity Generator CLI)**: Có sẵn tool console line (`bin/liteorm generate`) reverse-engineering từ Database thẳng ra file PHP Entity tích hợp đầy đủ Attributes.
+### 👍 Key Advantages (Pros)
+- **High Performance**: Features **Prepared Statement Caching** (reusing PDOStatement handles across query loops) and **Batch Insert** (O(1) prepare overhead) for high throughput.
+- **Zero Configuration**: Attribute-based mapping natively leverages **PHP 8.2 Attributes** (`#[Entity]`, `#[Column]`, `#[SoftDelete]`) without XML, YAML, or annotation parsers.
+- **Memory & Database Optimization**:
+  - **Identity Map**: Guarantees a single in-memory instance per database record identity.
+  - **Dirty Checking Snapshot**: Only modified fields are generated into `UPDATE` statements.
+  - **AsNoTracking**: Completely disables snapshot tracking for read-only analytical queries, freeing CPU cycles and memory.
+- **N+1 Query Prevention**: Eager Loading (`with()`) uses batched `WHERE IN` queries to load relationships in exactly 2 queries instead of N+1.
+- **Expressive Query API**: Rich collection of fluent query methods (`firstOrFail()`, `single()`, `whereNotIn()`, `withTrashed()`, `paginate()`).
+- **Entity Generator CLI**: Built-in console utility (`bin/liteorm generate`) reverse-engineers database tables directly into clean PHP entity classes with attributes.
 
-### 👎 Nhược điểm (Cons)
-- **Rào cản môi trường**: Yêu cầu bắt buộc **PHP 8.2+**, hoàn toàn không tương thích với dự án PHP 7.x cũ.
-- **Chưa có Versioning Migrations**: Framework mới chỉ hỗ trợ build bảng (`createTable()`) và gen Entity CLI. Chưa có flow chạy file Up/Down migrations (như Phinx hay Laravel).
-- **Database Dialects**: Mặc dù hoạt động hoàn hảo với MySQL, SQLite nhưng vì QueryBuilder đang dùng toán tử khá tiêu chuẩn, các query filter có syntax độc lạ trên SQL Server / PostgreSQL có thể cần custom thêm.
+### 👎 Technical Considerations (Cons)
+- **Runtime Requirement**: Requires **PHP 8.2+** to take advantage of typed attributes, readonly classes, and union types.
+- **Lightweight Schema Tooling**: Provides declarative table creation (`createTable()`) and reverse-engineering, but delegates multi-step migration history to tools like Phinx when complex versioning is needed.
 
 ---
 
